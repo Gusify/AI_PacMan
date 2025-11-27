@@ -1,5 +1,6 @@
 import random
 import sys
+import heapq
 from dataclasses import dataclass
 from typing import List
 
@@ -181,13 +182,103 @@ class Pacman(Entity):
         candidate = self.rect.move(dx, dy)
         return not any(candidate.colliderect(wall) for wall in walls)
 
-    def update(self, walls: List[pygame.Rect]) -> None:
+    def find_nearest_pellet(self, pellets: List[Pellet]):
+        """Find the nearest pellet to Pac-Man's current position."""
+        if not pellets:
+            return None
+
+        pacman_pos = Vector2(self.rect.center)
+        nearest_pellet = min(pellets, key=lambda p: pacman_pos.distance_squared_to(p.center))
+        return nearest_pellet
+
+    def heuristic(self, pos1, pos2):
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+    def get_neighbors(self, position: tuple[int, int], walls: List[pygame.Rect]) -> List[tuple[int, int]]:
+        """Get all valid neighboring tile positions for a given position.
+
+        Args:
+            position: A tuple (x, y) representing a tile position in pixels
+            walls: List of wall rectangles to check collisions against
+
+        Returns:
+            List of valid neighboring positions as (x, y) tuples
+        """
+        neighbors = []
+        x, y = position
+
+        for direction in CARDINAL_DIRECTIONS:
+            # Calculate neighbor position (one tile away)
+            neighbor_x = x + int(direction.x * TILE_SIZE)
+            neighbor_y = y + int(direction.y * TILE_SIZE)
+
+            # Create a rect at the neighbor position to check if it's valid
+            neighbor_rect = pygame.Rect(neighbor_x, neighbor_y, TILE_SIZE, TILE_SIZE)
+
+            # Check if this position doesn't collide with any walls
+            if not any(neighbor_rect.colliderect(wall) for wall in walls):
+                neighbors.append((neighbor_x, neighbor_y))
+
+        return neighbors
+
+    def astar(self, start, goal, walls: List[pygame.Rect]):
+        open_set = []
+        heapq.heappush(open_set, (0, start))
+        came_from = {}
+        g = {start: 0}
+        f = {start: self.heuristic(start, goal)}
+
+        while open_set:
+            current = heapq.heappop(open_set)[1]
+
+            if current == goal:
+                path = []
+                while current in came_from:
+                    path.append(current)
+                    current = came_from[current]
+                return path[::-1]
+
+            for neighbor in self.get_neighbors(current, walls):
+                tentative_g = g[current] + 1
+
+                if neighbor not in g or tentative_g < g[neighbor]:
+                    came_from[neighbor] = current
+                    g[neighbor] = tentative_g
+                    f[neighbor] = tentative_g + self.heuristic(neighbor, goal)
+                    heapq.heappush(open_set, (f[neighbor], neighbor))
+
+        return []
+
+    def update(self, walls: List[pygame.Rect], pellets: List[Pellet]) -> None:
+        # Find nearest pellet and calculate path to it
         if self.at_tile_center():
-            if self.desired_direction.length_squared() and self.can_move(self.desired_direction, walls):
-                self.direction = Vector2(self.desired_direction)
+            nearest_pellet = self.find_nearest_pellet(pellets)
+            if nearest_pellet:
+                start_pos = (self.rect.x, self.rect.y)
+                goal_pos = (
+                    int(nearest_pellet.center.x - TILE_SIZE // 2),
+                    int(nearest_pellet.center.y - TILE_SIZE // 2)
+                )
+                path = self.astar(start_pos, goal_pos, walls)
+
+                # Set direction based on first step in path
+                if path:
+                    next_pos = path[0]
+                    dx = next_pos[0] - start_pos[0]
+                    dy = next_pos[1] - start_pos[1]
+
+                    if dx > 0:
+                        self.direction = Vector2(1, 0)
+                    elif dx < 0:
+                        self.direction = Vector2(-1, 0)
+                    elif dy > 0:
+                        self.direction = Vector2(0, 1)
+                    elif dy < 0:
+                        self.direction = Vector2(0, -1)
+
+        # Move in the current direction
         if not self.move(walls):
-            if not self.can_move(self.direction, walls):
-                self.direction.update(0, 0)
+            self.direction.update(0, 0)
 
     def draw(self, surface: pygame.Surface) -> None:
         pygame.draw.circle(surface, self.color, self.rect.center, TILE_SIZE // 2 - 1)
@@ -376,7 +467,7 @@ class Game:
         if self.state != "playing":
             return
 
-        self.pacman.update(self.maze.walls)
+        self.pacman.update(self.maze.walls, self.pellets)
         for ghost in self.ghosts:
             ghost.update(self.maze.walls, self.pacman, dt)
 
