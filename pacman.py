@@ -146,7 +146,7 @@ class Entity:
 
     def reset(self) -> None:
         self.rect.topleft = (int(self.start_pos.x), int(self.start_pos.y))
-        self.direction.update(0, 0)
+        self.direction = Vector2(0, 0)
 
     def move(self, walls: List[pygame.Rect]) -> bool:
         if self.direction.length_squared() == 0:
@@ -207,6 +207,7 @@ class Pacman(Entity):
 
         pacman_pos = Vector2(self.rect.center)
         nearest_pellet = min(pellets, key=lambda p: pacman_pos.distance_squared_to(p.center))
+        print("nearest pellet: " + str(nearest_pellet))
         return nearest_pellet
 
     def find_nearby_threats(self, ghosts: List['Ghost'], threat_distance: float = 100.0) -> List['Ghost']:
@@ -252,7 +253,7 @@ class Pacman(Entity):
                 best_score = total_distance
                 best_direction = direction
         
-        return best_direction if best_direction else Vector2(0, 0)
+        return Vector2(best_direction) if best_direction else Vector2(0, 0) 
 
     def heuristic(self, pos1, pos2):
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
@@ -298,6 +299,7 @@ class Pacman(Entity):
                 path = []
                 while current in came_from:
                     path.append(current)
+                    print("path got appended" + str(path))
                     current = came_from[current]
                 return path[::-1]
 
@@ -321,15 +323,15 @@ class Pacman(Entity):
         
         if self.at_tile_center():
             if threats:
-                print("threats nearby")
                 # RUN AWAY from ghosts!
                 self.direction = self.find_safest_direction(walls, threats)
             else:
                 # Find nearest pellet and calculate path to it
-                print('search for pellets...')
                 nearest_pellet = self.find_nearest_pellet(pellets)
+          
                 if nearest_pellet:
                     start_pos = (self.rect.x, self.rect.y)
+                    print("starting position: " + str(start_pos))
                     goal_pos = (
                         int(nearest_pellet.center.x - TILE_SIZE // 2),
                         int(nearest_pellet.center.y - TILE_SIZE // 2)
@@ -353,7 +355,7 @@ class Pacman(Entity):
 
         # Move in the current direction
         if not self.move(walls):
-            self.direction.update(0, 0)
+            self.direction = Vector2(0, 0)
 
     def draw(self, surface: pygame.Surface) -> None:
         pygame.draw.circle(surface, self.color, self.rect.center, TILE_SIZE // 2 - 1)
@@ -382,6 +384,7 @@ class Ghost(Entity):
         self.frightened_timer = 0.0
 
     def set_frightened(self, duration: float) -> None:
+        print(f"[DEBUG] Ghost {self.color} is frightened for {duration} seconds.")
         self.frightened = True
         self.frightened_timer = duration
         self.speed = max(1, self.base_speed - 1)
@@ -391,6 +394,7 @@ class Ghost(Entity):
             return
         self.frightened_timer = max(0.0, self.frightened_timer - dt)
         if self.frightened_timer == 0.0:
+            print(f"[DEBUG] Ghost {self.color} is no longer frightened.")
             self.frightened = False
             self.speed = self.base_speed
 
@@ -420,7 +424,9 @@ class Ghost(Entity):
                 options = self.available_directions(walls)
 
         if self.frightened:
-            return random.choice(options)
+            chosen = random.choice(options)
+            print(f"[DEBUG] Ghost {self.color} (Frightened): choosing random direction {chosen}")
+            return chosen
 
         if self.behavior == "chaser":
             target = Vector2(pacman.rect.center)
@@ -430,7 +436,9 @@ class Ghost(Entity):
         else:
             target = Vector2(self.scatter_target)
 
-        return min(options, key=lambda opt: self._distance_to_target(opt, target))
+        chosen = min(options, key=lambda opt: self._distance_to_target(opt, target))
+        print(f"[DEBUG] Ghost {self.color} ({self.behavior}): Target={target}, Options={options}, Chose={chosen}")
+        return chosen
 
     def _distance_to_target(self, direction: Vector2, target: Vector2) -> float:
         next_center = Vector2(self.rect.center) + direction * TILE_SIZE
@@ -439,9 +447,11 @@ class Ghost(Entity):
     def update(self, walls: List[pygame.Rect], pacman: Pacman, dt: float) -> None:
         self.update_state(dt)
         if self.at_tile_center():
+            print(f"[DEBUG] Ghost {self.color} at tile center, choosing new direction.")
             self.direction = self.choose_direction(walls, pacman)
 
         if not self.move(walls):
+            print(f"[DEBUG] Ghost {self.color} was blocked, reversing direction.")
             self.direction = self.choose_direction(walls, pacman, allow_reverse=True)
             self.move(walls)
 
@@ -500,6 +510,7 @@ class Game:
         return ghosts
 
     def reset_game(self) -> None:
+        print("[DEBUG] GAME: Full game reset")
         self.score = 0
         self.lives = 3
         self.power_timer = 0.0
@@ -511,6 +522,7 @@ class Game:
         self.pellets = self.maze.create_pellets()
 
     def reset_entities(self) -> None:
+        print("[DEBUG] GAME: Resetting entities after life lost.")
         self.pacman.reset()
         for ghost in self.ghosts:
             ghost.reset()
@@ -572,14 +584,19 @@ class Game:
             if not self.pacman.rect.colliderect(ghost.rect):
                 continue
 
+
             if ghost.frightened:
+                print("[DEBUG] GAME: Ghost was frightened. Eating ghost.")
                 self.score += 200
                 ghost.reset()
             else:
+                print("[DEBUG] GAME: Ghost was not frightened. Pacman loses a life.")
                 self.lives -= 1
                 if self.lives <= 0:
+                    print("[DEBUG] GAME: No lives left. Game over.")
                     self.state = "gameover"
                 else:
+                    print(f"[DEBUG] GAME: {self.lives} lives remaining. Resetting entities.")
                     self.reset_entities()
                 break
 
