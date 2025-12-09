@@ -15,7 +15,6 @@ FPS = 60
 PACMAN_SPEED = 2
 GHOST_SPEED = 2
 POWER_MODE_DURATION = 6.0
-DANGER_RANGE = 4 * TILE_SIZE # New: Pacman flees if a ghost is within 4 tiles
 
 # Colors
 BLACK = (0, 0, 0)
@@ -93,7 +92,6 @@ class Pellet:
 
 
 class Maze:
-    # ... (Maze class is unchanged) ...
     def __init__(self, layout: List[str]) -> None:
         self.tile_size = TILE_SIZE
         self.layout = layout
@@ -139,7 +137,6 @@ class Maze:
 
 
 class Entity:
-    # ... (Entity class is unchanged) ...
     def __init__(self, start_pos: Vector2, color: tuple[int, int, int], speed: int) -> None:
         self.start_pos = Vector2(start_pos)
         self.rect = pygame.Rect(int(self.start_pos.x), int(self.start_pos.y), TILE_SIZE, TILE_SIZE)
@@ -174,8 +171,6 @@ class Pacman(Entity):
     def __init__(self, start_pos: Vector2) -> None:
         super().__init__(start_pos, YELLOW, PACMAN_SPEED)
         self.desired_direction = Vector2(0, 0)
-        self.mode = "seek"  # NEW: 'seek' or 'flee'
-        self.flee_cooldown = 0.0 # NEW: Timer to prevent rapid mode switching
 
     def queue_direction(self, direction: Vector2) -> None:
         self.desired_direction = Vector2(direction)
@@ -201,22 +196,33 @@ class Pacman(Entity):
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
     def get_neighbors(self, position: tuple[int, int], walls: List[pygame.Rect]) -> List[tuple[int, int]]:
-        """Get all valid neighboring tile positions for a given position."""
+        """Get all valid neighboring tile positions for a given position.
+
+        Args:
+            position: A tuple (x, y) representing a tile position in pixels
+            walls: List of wall rectangles to check collisions against
+
+        Returns:
+            List of valid neighboring positions as (x, y) tuples
+        """
         neighbors = []
         x, y = position
 
         for direction in CARDINAL_DIRECTIONS:
+            # Calculate neighbor position (one tile away)
             neighbor_x = x + int(direction.x * TILE_SIZE)
             neighbor_y = y + int(direction.y * TILE_SIZE)
+
+            # Create a rect at the neighbor position to check if it's valid
             neighbor_rect = pygame.Rect(neighbor_x, neighbor_y, TILE_SIZE, TILE_SIZE)
 
+            # Check if this position doesn't collide with any walls
             if not any(neighbor_rect.colliderect(wall) for wall in walls):
                 neighbors.append((neighbor_x, neighbor_y))
 
         return neighbors
 
     def astar(self, start, goal, walls: List[pygame.Rect]):
-        # ... (A* function is unchanged) ...
         open_set = []
         heapq.heappush(open_set, (0, start))
         came_from = {}
@@ -240,80 +246,322 @@ class Pacman(Entity):
                     came_from[neighbor] = current
                     g[neighbor] = tentative_g
                     f[neighbor] = tentative_g + self.heuristic(neighbor, goal)
-                    heapq.heappush(open_set, (f[neighbor], f[neighbor]))
+                    heapq.heappush(open_set, (f[neighbor], neighbor))
 
         return []
 
-    def _path_to_direction(self, start_pos, next_pos) -> Vector2:
-        """Helper to convert the first step of a path into a direction vector."""
-        dx = next_pos[0] - start_pos[0]
-        dy = next_pos[1] - start_pos[1]
-        if dx > 0: return Vector2(1, 0)
-        if dx < 0: return Vector2(-1, 0)
-        if dy > 0: return Vector2(0, 1)
-        if dy < 0: return Vector2(0, -1)
-        return Vector2(0, 0)
+    def update(self, walls: List[pygame.Rect], pellets: List[Pellet]) -> None:
+        # Find nearest pellet and calculate path to it
+        if self.at_tile_center():
+            nearest_pellet = self.find_nearest_pellet(pellets)
+            if nearest_pellet:
+                start_pos = (self.rect.x, self.rect.y)
+                goal_pos = (
+                    int(nearest_pellet.center.x - TILE_SIZE // 2),
+                    int(nearest_pellet.center.y - TILE_SIZE // 2)
+                )
+                path = self.astar(start_pos, goal_pos, walls)
 
-    def is_in_danger(self, danger_ghosts: List['Ghost']) -> bool:
-        """NEW: Check if any non-frightened ghost is within the danger range."""
-        pacman_pos = Vector2(self.rect.center)
-        for ghost in danger_ghosts:
-            if pacman_pos.distance_to(ghost.rect.center) < DANGER_RANGE:
-                return True
-        return False
+                # Set direction based on first step in path
+                if path:
+                    next_pos = path[0]
+                    dx = next_pos[0] - start_pos[0]
+                    dy = next_pos[1] - start_pos[1]
 
-    def get_escape_direction(self, danger_ghosts: List['Ghost'], walls: List[pygame.Rect]) -> Vector2:
-        """NEW: Choose the direction that maximizes distance from the closest danger ghost."""
-        if not danger_ghosts:
+                    if dx > 0:
+                        self.direction = Vector2(1, 0)
+                    elif dx < 0:
+                        self.direction = Vector2(-1, 0)
+                    elif dy > 0:
+                        self.direction = Vector2(0, 1)
+                    elif dy < 0:
+                        self.direction = Vector2(0, -1)
+
+        # Move in the current direction
+        if not self.move(walls):
+            self.direction.update(0, 0)
+
+    def draw(self, surface: pygame.Surface) -> None:
+        pygame.draw.circle(surface, self.color, self.rect.center, TILE_SIZE // 2 - 1)
+
+
+class Ghost(Entity):
+    def __init__(
+        self,
+        start_pos: Vector2,
+        color: tuple[int, int, int],
+        behavior: str,
+        scatter_target: Vector2,
+    ) -> None:
+        super().__init__(start_pos, color, GHOST_SPEED)
+        self.behavior = behavior
+        self.scatter_target = Vector2(scatter_target)
+        self.base_speed = GHOST_SPEED
+        self.speed = self.base_speed
+        self.frightened = False
+        self.frightened_timer = 0.0
+
+    def reset(self) -> None:
+        super().reset()
+        self.speed = self.base_speed
+        self.frightened = False
+        self.frightened_timer = 0.0
+
+    def set_frightened(self, duration: float) -> None:
+        self.frightened = True
+        self.frightened_timer = duration
+        self.speed = max(1, self.base_speed - 1)
+
+    def update_state(self, dt: float) -> None:
+        if not self.frightened:
+            return
+        self.frightened_timer = max(0.0, self.frightened_timer - dt)
+        if self.frightened_timer == 0.0:
+            self.frightened = False
+            self.speed = self.base_speed
+
+    def available_directions(self, walls: List[pygame.Rect]) -> List[Vector2]:
+        options: List[Vector2] = []
+        for direction in CARDINAL_DIRECTIONS:
+            dx = int(direction.x * TILE_SIZE)
+            dy = int(direction.y * TILE_SIZE)
+            candidate = self.rect.move(dx, dy)
+            if not any(candidate.colliderect(wall) for wall in walls):
+                options.append(Vector2(direction))
+        return options
+
+    def choose_direction(
+        self,
+        walls: List[pygame.Rect],
+        pacman: Pacman,
+        allow_reverse: bool = False,
+    ) -> Vector2:
+        options = self.available_directions(walls)
+        if not options:
             return Vector2(0, 0)
 
-        # 1. Find the nearest dangerous ghost
-        pacman_pos = Vector2(self.rect.center)
-        closest_ghost = min(danger_ghosts, key=lambda g: pacman_pos.distance_squared_to(g.rect.center))
-        closest_ghost_pos = Vector2(closest_ghost.rect.center)
+        if not allow_reverse and self.direction.length_squared():
+            options = [opt for opt in options if opt != -self.direction]
+            if not options:
+                options = self.available_directions(walls)
 
-        best_score = -float('inf')
-        best_direction = Vector2(0, 0)
+        if self.frightened:
+            return random.choice(options)
 
-        # 2. Score all available directions
-        available_directions = CARDINAL_DIRECTIONS
-        for direction in available_directions:
-            # Check if move is blocked by a wall
-            if not self.can_move(direction, walls):
-                continue
+        if self.behavior == "chaser":
+            target = Vector2(pacman.rect.center)
+        elif self.behavior == "ambusher":
+            ahead = Vector2(pacman.rect.center) + pacman.direction * TILE_SIZE * 4
+            target = ahead
+        else:
+            target = Vector2(self.scatter_target)
 
-            # Calculate the score: distance to ghost from the next position
-            next_center = pacman_pos + direction * TILE_SIZE
-            # We want to MAXIMIZE the distance to the ghost
-            score = next_center.distance_squared_to(closest_ghost_pos)
+        return min(options, key=lambda opt: self._distance_to_target(opt, target))
 
-            if score > best_score:
-                best_score = score
-                best_direction = direction
+    def _distance_to_target(self, direction: Vector2, target: Vector2) -> float:
+        next_center = Vector2(self.rect.center) + direction * TILE_SIZE
+        return next_center.distance_squared_to(target)
 
-        return best_direction
+    def update(self, walls: List[pygame.Rect], pacman: Pacman, dt: float) -> None:
+        self.update_state(dt)
+        if self.at_tile_center():
+            self.direction = self.choose_direction(walls, pacman)
+
+        if not self.move(walls):
+            self.direction = self.choose_direction(walls, pacman, allow_reverse=True)
+            self.move(walls)
+
+    def draw(self, surface: pygame.Surface) -> None:
+        color = FRIGHTENED_COLOR if self.frightened else self.color
+        pygame.draw.circle(surface, color, self.rect.center, TILE_SIZE // 2 - 1)
+        eye_color = BLACK
+        pygame.draw.circle(surface, eye_color, (self.rect.centerx - 4, self.rect.centery - 2), 2)
+        pygame.draw.circle(surface, eye_color, (self.rect.centerx + 4, self.rect.centery - 2), 2)
 
 
-    def update(self, walls: List[pygame.Rect], pellets: List[Pellet], ghosts: List['Ghost'], dt: float) -> None:
-        """MODIFIED: Handles mode switching (Seek vs. Flee) and applies AI logic."""
-        
-        # 1. Update cooldown timer
-        if self.flee_cooldown > 0.0:
-            self.flee_cooldown = max(0.0, self.flee_cooldown - dt)
+# --- Game loop -------------------------------------------------------------
 
-        # Only make a new decision when centered on a tile
-        if not self.at_tile_center():
-            if not self.move(walls):
-                self.direction.update(0, 0)
+class Game:
+    def __init__(self) -> None:
+        pygame.init()
+        self.maze = Maze(LEVEL_LAYOUT)
+        width = self.maze.pixel_width
+        height = self.maze.pixel_height + HUD_HEIGHT
+        self.screen = pygame.display.set_mode((width, height))
+        pygame.display.set_caption("Mini Pac-Man")
+        self.clock = pygame.time.Clock()
+
+        self.font = pygame.font.SysFont("arial", 24, bold=True)
+        self.title_font = pygame.font.SysFont("arial", 32, bold=True)
+
+        self.score = 0
+        self.lives = 3
+        self.power_timer = 0.0
+        self.state = "ready"
+        self.ready_timer = 2.0
+
+        self.pacman = Pacman(self.maze.player_start)
+        self.ghosts = self._create_ghosts()
+        self.reset_game()
+
+    def _create_ghosts(self) -> List[Ghost]:
+        behaviors = ["chaser", "ambusher", "patrol", "patrol"]
+        scatter_points = [
+            Vector2(TILE_SIZE * 1.5, TILE_SIZE * 1.5),
+            Vector2(self.maze.pixel_width - TILE_SIZE * 1.5, TILE_SIZE * 1.5),
+            Vector2(TILE_SIZE * 1.5, self.maze.pixel_height - TILE_SIZE * 1.5),
+            Vector2(
+                self.maze.pixel_width - TILE_SIZE * 1.5,
+                self.maze.pixel_height - TILE_SIZE * 1.5,
+            ),
+        ]
+
+        ghosts: List[Ghost] = []
+        for idx, start in enumerate(self.maze.ghost_starts):
+            color = GHOST_COLORS[idx % len(GHOST_COLORS)]
+            behavior = behaviors[idx % len(behaviors)]
+            scatter_target = scatter_points[idx % len(scatter_points)]
+            ghost = Ghost(start, color, behavior, scatter_target)
+            ghosts.append(ghost)
+        return ghosts
+
+    def reset_game(self) -> None:
+        self.score = 0
+        self.lives = 3
+        self.power_timer = 0.0
+        self.state = "ready"
+        self.ready_timer = 2.0
+        self.pacman.reset()
+        for ghost in self.ghosts:
+            ghost.reset()
+        self.pellets = self.maze.create_pellets()
+
+    def reset_entities(self) -> None:
+        self.pacman.reset()
+        for ghost in self.ghosts:
+            ghost.reset()
+        self.power_timer = 0.0
+        self.ready_timer = 1.5
+        self.state = "life_lost"
+
+    def handle_events(self) -> None:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    pygame.quit()
+                    sys.exit()
+                if event.key in DIRECTION_VECTORS:
+                    self.pacman.queue_direction(Vector2(DIRECTION_VECTORS[event.key]))
+                if event.key == pygame.K_SPACE and self.state in {"win", "gameover"}:
+                    self.reset_game()
+
+    def update(self, dt: float) -> None:
+        if self.state == "ready" or self.state == "life_lost":
+            self.ready_timer = max(0.0, self.ready_timer - dt)
+            if self.ready_timer == 0.0:
+                self.state = "playing"
             return
 
-        # --- Decision Time (At tile center) ---
-        
-        # Identify non-frightened ghosts for danger assessment
-        danger_ghosts = [g for g in ghosts if not g.frightened]
-        danger = self.is_in_danger(danger_ghosts)
-        
-        # 2. Mode Transition Logic
-        if danger and self.mode != "flee":
-            self.mode = "flee"
-        elif not danger and self.mode == "flee"
+        if self.state != "playing":
+            return
+
+        self.pacman.update(self.maze.walls, self.pellets)
+        for ghost in self.ghosts:
+            ghost.update(self.maze.walls, self.pacman, dt)
+
+        self._handle_pellet_collisions(dt)
+        self._handle_ghost_collisions()
+
+        if not self.pellets:
+            self.state = "win"
+
+    def _handle_pellet_collisions(self, dt: float) -> None:
+        if self.power_timer > 0.0:
+            self.power_timer = max(0.0, self.power_timer - dt)
+
+        for pellet in self.pellets[:]:
+            if pellet.collides(self.pacman.rect):
+                self.pellets.remove(pellet)
+                if pellet.power:
+                    self.score += 50
+                    self.power_timer = POWER_MODE_DURATION
+                    for ghost in self.ghosts:
+                        ghost.set_frightened(POWER_MODE_DURATION)
+                else:
+                    self.score += 10
+
+    def _handle_ghost_collisions(self) -> None:
+        for ghost in self.ghosts:
+            if not self.pacman.rect.colliderect(ghost.rect):
+                continue
+
+            if ghost.frightened:
+                self.score += 200
+                ghost.reset()
+            else:
+                self.lives -= 1
+                if self.lives <= 0:
+                    self.state = "gameover"
+                else:
+                    self.reset_entities()
+                break
+
+    def draw(self) -> None:
+        self.screen.fill(BLACK)
+        self.maze.draw(self.screen)
+
+        for pellet in self.pellets:
+            pellet.draw(self.screen)
+
+        self.pacman.draw(self.screen)
+        for ghost in self.ghosts:
+            ghost.draw(self.screen)
+
+        self._draw_hud()
+
+        if self.state == "ready":
+            self._draw_center_text("Ready!", YELLOW)
+        elif self.state == "life_lost":
+            self._draw_center_text("Watch out!", WHITE)
+        elif self.state == "win":
+            self._draw_center_text("You Win! (SPACE to restart)", WHITE)
+        elif self.state == "gameover":
+            self._draw_center_text("Game Over (SPACE to restart)", WHITE)
+
+        pygame.display.flip()
+
+    def _draw_hud(self) -> None:
+        hud_rect = pygame.Rect(0, self.maze.pixel_height, self.maze.pixel_width, HUD_HEIGHT)
+        pygame.draw.rect(self.screen, (20, 20, 20), hud_rect)
+
+        score_surface = self.font.render(f"Score: {self.score}", True, WHITE)
+        lives_surface = self.font.render(f"Lives: {self.lives}", True, WHITE)
+
+        self.screen.blit(score_surface, (10, self.maze.pixel_height + 10))
+        self.screen.blit(
+            lives_surface,
+            (self.maze.pixel_width - lives_surface.get_width() - 10, self.maze.pixel_height + 10),
+        )
+
+        if self.power_timer > 0.0:
+            timer_surface = self.font.render(f"Power: {self.power_timer:0.1f}s", True, POWER_COLOR)
+            self.screen.blit(timer_surface, (10, self.maze.pixel_height + 30))
+
+    def _draw_center_text(self, text: str, color: tuple[int, int, int]) -> None:
+        label = self.title_font.render(text, True, color)
+        rect = label.get_rect(center=(self.maze.pixel_width / 2, self.maze.pixel_height / 2))
+        self.screen.blit(label, rect)
+
+    def run(self) -> None:
+        while True:
+            dt = self.clock.tick(FPS) / 1000.0
+            self.handle_events()
+            self.update(dt)
+            self.draw()
+
+
+if __name__ == "__main__":
+    Game().run()
