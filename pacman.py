@@ -315,6 +315,7 @@ class Pacman(Entity):
                 self.direction = self.find_safest_direction(walls, threats)
             else:
                 # Find nearest pellet and calculate path to it
+                print('search for pellets...')
                 nearest_pellet = self.find_nearest_pellet(pellets)
                 if nearest_pellet:
                     start_pos = (self.rect.x, self.rect.y)
