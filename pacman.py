@@ -171,6 +171,12 @@ class Pacman(Entity):
     def __init__(self, start_pos: Vector2) -> None:
         super().__init__(start_pos, YELLOW, PACMAN_SPEED)
         self.desired_direction = Vector2(0, 0)
+        self.stuck_timer = 0.0
+        self.stuck_threshold = 2.0  # seconds before considering stuck
+        self.last_position = Vector2(start_pos)
+        self.position_tolerance = TILE_SIZE  # how far can move before resetting timer
+        self.search_range_multiplier = 1.0
+        self.max_search_multiplier = 3.0
 
     def queue_direction(self, direction: Vector2) -> None:
         self.desired_direction = Vector2(direction)
