@@ -250,10 +250,8 @@ class Pacman(Entity):
 
         return []
 
-    def update(self, walls: List[pygame.Rect], pellets: List[Pellet], ghosts=None) -> None:
-        if ghosts is None:
-            ghosts = []  # normal call compatibility
-
+    def update(self, walls: List[pygame.Rect], pellets: List[Pellet]) -> None:
+        # Find nearest pellet and calculate path to it
         if self.at_tile_center():
             nearest_pellet = self.find_nearest_pellet(pellets)
             if nearest_pellet:
@@ -264,105 +262,22 @@ class Pacman(Entity):
                 )
                 path = self.astar(start_pos, goal_pos, walls)
 
+                # Set direction based on first step in path
                 if path:
                     next_pos = path[0]
-
-                    # ---------------------------
-                    # GHOST AVOIDANCE LOGIC
-                    # ---------------------------
-                    safe = True
-                    threat_distance = TILE_SIZE * 6   # widen just a bit for LoS logic
-
-                    pac_center = Vector2(self.rect.center)
-
-                    def has_line_of_sight(p, g):
-                        # Same column
-                        if abs(p.x - g.x) < TILE_SIZE / 2:
-                            x = int(p.x // TILE_SIZE) * TILE_SIZE
-                            y1 = int(p.y // TILE_SIZE)
-                            y2 = int(g.y // TILE_SIZE)
-                            step = 1 if y2 > y1 else -1
-                            for y in range(y1 + step, y2, step):
-                                r = pygame.Rect(x, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-                                if any(r.colliderect(w) for w in walls):
-                                    return False
-                            return True
-
-                        # Same row
-                        if abs(p.y - g.y) < TILE_SIZE / 2:
-                            y = int(p.y // TILE_SIZE) * TILE_SIZE
-                            x1 = int(p.x // TILE_SIZE)
-                            x2 = int(g.x // TILE_SIZE)
-                            step = 1 if x2 > x1 else -1
-                            for x in range(x1 + step, x2, step):
-                                r = pygame.Rect(x * TILE_SIZE, y, TILE_SIZE, TILE_SIZE)
-                                if any(r.colliderect(w) for w in walls):
-                                    return False
-                            return True
-
-                        return False
-
-
-                    next_center = Vector2(next_pos[0] + TILE_SIZE/2,
-                                        next_pos[1] + TILE_SIZE/2)
-
-                    # before the loop
-                    threat_ghost_pos = None
-
-                    for ghost in ghosts:
-                        gpos = Vector2(ghost.rect.center)
-
-                        if pac_center.distance_to(gpos) >= threat_distance:
-                            continue
-                        if not has_line_of_sight(pac_center, gpos):
-                            continue
-
-                        if next_center.distance_to(gpos) < pac_center.distance_to(gpos):
-                            safe = False
-                            threat_ghost_pos = gpos   # ← store the threatening ghost
-                            break
-
-
-                    if not safe:
-                        print("danger has been detected")
-                        best_dir = Vector2(0, 0)
-                        best_dist = -1
-
-                        for d in CARDINAL_DIRECTIONS:
-                            dx = int(d.x * TILE_SIZE)
-                            dy = int(d.y * TILE_SIZE)
-                            candidate = self.rect.move(dx, dy)
-                            if any(candidate.colliderect(w) for w in walls):
-                                continue
-
-                            cand_center = Vector2(candidate.center)
-                            dist = cand_center.distance_to(threat_ghost_pos)  # ← use correct ghost
-
-                            if dist > best_dist:
-                                best_dist = dist
-                                best_dir = Vector2(d)
-
-                        if best_dir.length_squared() > 0 and threat_ghost_pos is not None:
-                            self.direction = best_dir
-                        else:
-                            print("sitting still")
-                            self.direction.update(0, 0)
-
-                        return
-
-
-                    # ---------------------------
-                    # ---------------------------
-
-                    # NORMAL MOVEMENT SELECTION
                     dx = next_pos[0] - start_pos[0]
                     dy = next_pos[1] - start_pos[1]
 
-                    if dx > 0:  self.direction = Vector2(1, 0)
-                    elif dx < 0: self.direction = Vector2(-1, 0)
-                    elif dy > 0: self.direction = Vector2(0, 1)
-                    elif dy < 0: self.direction = Vector2(0, -1)
+                    if dx > 0:
+                        self.direction = Vector2(1, 0)
+                    elif dx < 0:
+                        self.direction = Vector2(-1, 0)
+                    elif dy > 0:
+                        self.direction = Vector2(0, 1)
+                    elif dy < 0:
+                        self.direction = Vector2(0, -1)
 
+        # Move in the current direction
         if not self.move(walls):
             self.direction.update(0, 0)
 
@@ -553,7 +468,7 @@ class Game:
         if self.state != "playing":
             return
 
-        self.pacman.update(self.maze.walls, self.pellets, self.ghosts)
+        self.pacman.update(self.maze.walls, self.pellets)
         for ghost in self.ghosts:
             ghost.update(self.maze.walls, self.pacman, dt)
 
