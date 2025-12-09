@@ -171,12 +171,6 @@ class Pacman(Entity):
     def __init__(self, start_pos: Vector2) -> None:
         super().__init__(start_pos, YELLOW, PACMAN_SPEED)
         self.desired_direction = Vector2(0, 0)
-        self.stuck_timer = 0.0
-        self.stuck_threshold = 2.0  # seconds before considering stuck
-        self.last_position = Vector2(start_pos)
-        self.position_tolerance = TILE_SIZE  # how far can move before resetting timer
-        self.search_range_multiplier = 1.0
-        self.max_search_multiplier = 3.0
 
     def queue_direction(self, direction: Vector2) -> None:
         self.desired_direction = Vector2(direction)
@@ -197,51 +191,6 @@ class Pacman(Entity):
         pacman_pos = Vector2(self.rect.center)
         nearest_pellet = min(pellets, key=lambda p: pacman_pos.distance_squared_to(p.center))
         return nearest_pellet
-
-    def find_nearby_threats(self, ghosts: List['Ghost'], threat_distance: float = 100.0) -> List['Ghost']:
-        """Find ghosts that are dangerously close and not frightened."""
-        pacman_pos = Vector2(self.rect.center)
-        threats = []
-        
-        for ghost in ghosts:
-            if ghost.frightened:
-                continue
-            ghost_pos = Vector2(ghost.rect.center)
-            distance = pacman_pos.distance_to(ghost_pos)
-            if distance < threat_distance:
-                threats.append(ghost)
-        
-        return threats
-
-    def find_safest_direction(self, walls: List[pygame.Rect], threats: List['Ghost']) -> Vector2:
-        """Find the direction that maximizes distance from threats."""
-        if not threats:
-            return Vector2(0, 0)
-        
-        best_direction = None
-        best_score = -float('inf')
-        
-        for direction in CARDINAL_DIRECTIONS:
-            dx = int(direction.x * TILE_SIZE)
-            dy = int(direction.y * TILE_SIZE)
-            candidate = self.rect.move(dx, dy)
-            
-            # Skip if this direction hits a wall
-            if any(candidate.colliderect(wall) for wall in walls):
-                continue
-            
-            # Calculate total distance from all threats
-            future_pos = Vector2(candidate.center)
-            total_distance = 0
-            for threat in threats:
-                threat_pos = Vector2(threat.rect.center)
-                total_distance += future_pos.distance_to(threat_pos)
-            
-            if total_distance > best_score:
-                best_score = total_distance
-                best_direction = direction
-        
-        return best_direction if best_direction else Vector2(0, 0)
 
     def heuristic(self, pos1, pos2):
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
@@ -301,43 +250,32 @@ class Pacman(Entity):
 
         return []
 
-    def update(self, walls: List[pygame.Rect], pellets: List[Pellet], ghosts: List['Ghost'] = None) -> None:
-        if ghosts is None:
-            ghosts = []
-        
-        # Check for nearby threats
-        threats = self.find_nearby_threats(ghosts, threat_distance=80.0)
-        
+    def update(self, walls: List[pygame.Rect], pellets: List[Pellet]) -> None:
+        # Find nearest pellet and calculate path to it
         if self.at_tile_center():
-            if threats:
-                print("threats nearby")
-                # RUN AWAY from ghosts!
-                self.direction = self.find_safest_direction(walls, threats)
-            else:
-                # Find nearest pellet and calculate path to it
-                nearest_pellet = self.find_nearest_pellet(pellets)
-                if nearest_pellet:
-                    start_pos = (self.rect.x, self.rect.y)
-                    goal_pos = (
-                        int(nearest_pellet.center.x - TILE_SIZE // 2),
-                        int(nearest_pellet.center.y - TILE_SIZE // 2)
-                    )
-                    path = self.astar(start_pos, goal_pos, walls)
+            nearest_pellet = self.find_nearest_pellet(pellets)
+            if nearest_pellet:
+                start_pos = (self.rect.x, self.rect.y)
+                goal_pos = (
+                    int(nearest_pellet.center.x - TILE_SIZE // 2),
+                    int(nearest_pellet.center.y - TILE_SIZE // 2)
+                )
+                path = self.astar(start_pos, goal_pos, walls)
 
-                    # Set direction based on first step in path
-                    if path:
-                        next_pos = path[0]
-                        dx = next_pos[0] - start_pos[0]
-                        dy = next_pos[1] - start_pos[1]
+                # Set direction based on first step in path
+                if path:
+                    next_pos = path[0]
+                    dx = next_pos[0] - start_pos[0]
+                    dy = next_pos[1] - start_pos[1]
 
-                        if dx > 0:
-                            self.direction = Vector2(1, 0)
-                        elif dx < 0:
-                            self.direction = Vector2(-1, 0)
-                        elif dy > 0:
-                            self.direction = Vector2(0, 1)
-                        elif dy < 0:
-                            self.direction = Vector2(0, -1)
+                    if dx > 0:
+                        self.direction = Vector2(1, 0)
+                    elif dx < 0:
+                        self.direction = Vector2(-1, 0)
+                    elif dy > 0:
+                        self.direction = Vector2(0, 1)
+                    elif dy < 0:
+                        self.direction = Vector2(0, -1)
 
         # Move in the current direction
         if not self.move(walls):
@@ -530,7 +468,7 @@ class Game:
         if self.state != "playing":
             return
 
-        self.pacman.update(self.maze.walls, self.pellets, self.ghosts)
+        self.pacman.update(self.maze.walls, self.pellets)
         for ghost in self.ghosts:
             ghost.update(self.maze.walls, self.pacman, dt)
 
