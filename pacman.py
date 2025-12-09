@@ -12,7 +12,7 @@ from pygame.math import Vector2
 TILE_SIZE = 20
 HUD_HEIGHT = 60
 FPS = 60
-PACMAN_SPEED = 2
+PACMAN_SPEED = 4
 GHOST_SPEED = 2
 POWER_MODE_DURATION = 6.0
 
@@ -153,14 +153,18 @@ class Entity:
         if self.direction.length_squared() == 0:
             return False
 
-        dx = int(self.direction.x * self.speed)
-        dy = int(self.direction.y * self.speed)
-        candidate = self.rect.move(dx, dy)
-        if any(candidate.colliderect(wall) for wall in walls):
-            return False
+        moved = False
+        step_x = int(self.direction.x)
+        step_y = int(self.direction.y)
 
-        self.rect = candidate
-        return True
+        for _ in range(self.speed):
+            candidate = self.rect.move(step_x, step_y)
+            if any(candidate.colliderect(wall) for wall in walls):
+                break
+            self.rect = candidate
+            moved = True
+
+        return moved
 
     def at_tile_center(self) -> bool:
         center_x = (self.rect.centerx - TILE_SIZE // 2) % TILE_SIZE
@@ -226,31 +230,35 @@ class Pacman(Entity):
         
         return threats
 
-    def find_safest_direction(self, walls: List[pygame.Rect], threats: List['Ghost']) -> Vector2:
-        """Find the direction that maximizes distance from threats."""
+    def find_safest_direction(self, walls: List[pygame.Rect], threats: List['Ghost'], pellets: List[Pellet]) -> Vector2:
+        """Find the direction that maximizes distance from threats, favoring pellets along the way."""
         if not threats:
             return Vector2(0, 0)
 
-        def escape_score(direction: Vector2) -> tuple[float, int]:
-            """Score a direction by closest ghost distance and corridor length."""
-            steps_ahead = 6
+        def escape_score(direction: Vector2) -> tuple[float, int, int]:
+            """Score a direction by closest ghost distance, pellet bonus, and corridor length."""
+            steps_ahead = 10
             rect = self.rect
             closest = float("inf")
             length = 0
+            pellet_bonus = 0
             for _ in range(steps_ahead):
                 candidate = rect.move(int(direction.x * TILE_SIZE), int(direction.y * TILE_SIZE))
                 if any(candidate.colliderect(wall) for wall in walls):
                     break
                 length += 1
+                for pellet in pellets:
+                    if pellet.collides(candidate):
+                        pellet_bonus = max(pellet_bonus, 4 if pellet.power else 2)
                 pos = Vector2(candidate.center)
                 for threat in threats:
                     closest = min(closest, pos.distance_to(Vector2(threat.rect.center)))
                 rect = candidate
-            # Higher is better: prioritize distance to ghosts, then corridor length
-            return (closest if closest != float("inf") else 0.0, length)
+            # Higher is better: prioritize distance to ghosts, then pellets, then corridor length
+            return (closest if closest != float("inf") else 0.0, pellet_bonus, length)
 
         best_direction = None
-        best_score = (-float("inf"), -float("inf"))
+        best_score = (-float("inf"), -float("inf"), -float("inf"))
 
         for direction in CARDINAL_DIRECTIONS:
             dx = int(direction.x * TILE_SIZE)
@@ -335,13 +343,16 @@ class Pacman(Entity):
         if self.at_tile_center():
             if threats:
                 # RUN AWAY from ghosts!
-                self.direction = self.find_safest_direction(walls, threats)
+                self.direction = self.find_safest_direction(walls, threats, pellets)
             else:
                 # Find nearest pellet and calculate path to it
                 nearest_pellet = self.find_nearest_pellet(pellets)
           
                 if nearest_pellet:
-                    start_pos = (self.rect.x, self.rect.y)
+                    start_pos = (
+                        (self.rect.x // TILE_SIZE) * TILE_SIZE,
+                        (self.rect.y // TILE_SIZE) * TILE_SIZE,
+                    )
                     print("starting position: " + str(start_pos))
                     goal_pos = (
                         int(nearest_pellet.center.x - TILE_SIZE // 2),
