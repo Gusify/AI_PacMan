@@ -230,30 +230,40 @@ class Pacman(Entity):
         """Find the direction that maximizes distance from threats."""
         if not threats:
             return Vector2(0, 0)
-        
+
+        def escape_score(direction: Vector2) -> tuple[float, int]:
+            """Score a direction by closest ghost distance and corridor length."""
+            steps_ahead = 6
+            rect = self.rect
+            closest = float("inf")
+            length = 0
+            for _ in range(steps_ahead):
+                candidate = rect.move(int(direction.x * TILE_SIZE), int(direction.y * TILE_SIZE))
+                if any(candidate.colliderect(wall) for wall in walls):
+                    break
+                length += 1
+                pos = Vector2(candidate.center)
+                for threat in threats:
+                    closest = min(closest, pos.distance_to(Vector2(threat.rect.center)))
+                rect = candidate
+            # Higher is better: prioritize distance to ghosts, then corridor length
+            return (closest if closest != float("inf") else 0.0, length)
+
         best_direction = None
-        best_score = -float('inf')
-        
+        best_score = (-float("inf"), -float("inf"))
+
         for direction in CARDINAL_DIRECTIONS:
             dx = int(direction.x * TILE_SIZE)
             dy = int(direction.y * TILE_SIZE)
             candidate = self.rect.move(dx, dy)
-            
-            # Skip if this direction hits a wall
             if any(candidate.colliderect(wall) for wall in walls):
                 continue
-            
-            # Calculate total distance from all threats
-            future_pos = Vector2(candidate.center)
-            total_distance = 0
-            for threat in threats:
-                threat_pos = Vector2(threat.rect.center)
-                total_distance += future_pos.distance_to(threat_pos)
-            
-            if total_distance > best_score:
-                best_score = total_distance
+
+            score = escape_score(direction)
+            if score > best_score:
+                best_score = score
                 best_direction = direction
-        
+
         return Vector2(best_direction) if best_direction else Vector2(0, 0) 
 
     def heuristic(self, pos1, pos2):
@@ -413,6 +423,7 @@ class Ghost(Entity):
         self,
         walls: List[pygame.Rect],
         pacman: Pacman,
+        ghosts: List['Ghost'],
         allow_reverse: bool = False,
     ) -> Vector2:
         options = self.available_directions(walls)
@@ -429,11 +440,21 @@ class Ghost(Entity):
             print(f"[DEBUG] Ghost {self.color} (Frightened): choosing random direction {chosen}")
             return chosen
 
-        if self.behavior == "chaser":
-            target = Vector2(pacman.rect.center)
-        elif self.behavior == "ambusher":
-            ahead = Vector2(pacman.rect.center) + pacman.direction * TILE_SIZE * 4
-            target = ahead
+        pac_center = Vector2(pacman.rect.center)
+        aim_dir = pacman.direction if pacman.direction.length_squared() else Vector2(1, 0)
+
+        if self.behavior == "blinky":
+            target = pac_center
+        elif self.behavior == "pinky":
+            target = pac_center + aim_dir * TILE_SIZE * 4
+        elif self.behavior == "inky":
+            blinky = next((g for g in ghosts if g.behavior == "blinky"), None)
+            blinky_center = Vector2(blinky.rect.center) if blinky else pac_center
+            ahead = pac_center + aim_dir * TILE_SIZE * 2
+            target = ahead + (ahead - blinky_center)
+        elif self.behavior == "clyde":
+            distance_to_pacman = Vector2(self.rect.center).distance_to(pac_center)
+            target = pac_center if distance_to_pacman >= TILE_SIZE * 8 else Vector2(self.scatter_target)
         else:
             target = Vector2(self.scatter_target)
 
@@ -445,15 +466,15 @@ class Ghost(Entity):
         next_center = Vector2(self.rect.center) + direction * TILE_SIZE
         return next_center.distance_squared_to(target)
 
-    def update(self, walls: List[pygame.Rect], pacman: Pacman, dt: float) -> None:
+    def update(self, walls: List[pygame.Rect], pacman: Pacman, ghosts: List['Ghost'], dt: float) -> None:
         self.update_state(dt)
         if self.at_tile_center():
             print(f"[DEBUG] Ghost {self.color} at tile center, choosing new direction.")
-            self.direction = self.choose_direction(walls, pacman)
+            self.direction = self.choose_direction(walls, pacman, ghosts)
 
         if not self.move(walls):
             print(f"[DEBUG] Ghost {self.color} was blocked, reversing direction.")
-            self.direction = self.choose_direction(walls, pacman, allow_reverse=True)
+            self.direction = self.choose_direction(walls, pacman, ghosts, allow_reverse=True)
             self.move(walls)
 
     def draw(self, surface: pygame.Surface) -> None:
@@ -490,7 +511,7 @@ class Game:
         self.reset_game()
 
     def _create_ghosts(self) -> List[Ghost]:
-        behaviors = ["chaser", "ambusher", "patrol", "patrol"]
+        behaviors = ["blinky", "pinky", "inky", "clyde"]
         scatter_points = [
             Vector2(TILE_SIZE * 1.5, TILE_SIZE * 1.5),
             Vector2(self.maze.pixel_width - TILE_SIZE * 1.5, TILE_SIZE * 1.5),
@@ -557,7 +578,7 @@ class Game:
 
         self.pacman.update(self.maze.walls, self.pellets, self.ghosts)
         for ghost in self.ghosts:
-            ghost.update(self.maze.walls, self.pacman, dt)
+            ghost.update(self.maze.walls, self.pacman, self.ghosts, dt)
 
         self._handle_pellet_collisions(dt)
         self._handle_ghost_collisions()
