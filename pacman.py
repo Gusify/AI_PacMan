@@ -39,17 +39,17 @@ LEVEL_LAYOUT = [
   "1001111100011111001111100001",
   "1011111100011111001111111101",
   "1010000000000000000000000101",
-  "1010111111111101111111100101",
+  "1010111111111000111111100101",
   "1010000000000000000000000101",
-  "1010000111111101111110000101",
+  "1010000111111000111110000101",
   "1000000100000000000010000001",
   "1000000001111111100000000001",
   "1000000000GGGG00000000000001",
   "1000000001111111100000000001",
   "1000000100000000000010000001",
-  "1010000111111101111110000101",
+  "1010000111111000111110000101",
   "1010000000000000000000000101",
-  "1010111111111101111111110101",
+  "1010111111111000111111110101",
   "1010000000000P00000000000101",
   "1011111100000000001111111001",
   "1001111100111111001111100001",
@@ -174,6 +174,17 @@ class Pacman(Entity):
         self.stuck_timer = 0.0
         self.stuck_threshold = 2.0  # seconds before considering stuck
         self.last_position = Vector2(start_pos)
+        self.position_tolerance = TILE_SIZE  # how far can move before resetting timer
+        self.search_range_multiplier = 1.0
+        self.max_search_multiplier = 3.0
+
+    def reset(self) -> None:
+        super().reset()
+        # Add these lines to reset the new Pacman AI state variables
+        self.desired_direction = Vector2(0, 0)
+        self.stuck_timer = 0.0
+        self.stuck_threshold = 2.0  # seconds before considering stuck
+        self.last_position = Vector2(self.start_pos)
         self.position_tolerance = TILE_SIZE  # how far can move before resetting timer
         self.search_range_multiplier = 1.0
         self.max_search_multiplier = 3.0
