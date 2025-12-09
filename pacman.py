@@ -271,34 +271,87 @@ class Pacman(Entity):
                     # GHOST AVOIDANCE LOGIC
                     # ---------------------------
                     safe = True
-                    threat_distance = TILE_SIZE * 4   # 4 tiles radius
+                    threat_distance = TILE_SIZE * 6   # widen just a bit for LoS logic
+
+                    pac_center = Vector2(self.rect.center)
+
+                    def has_line_of_sight(p, g):
+                        # Same column
+                        if abs(p.x - g.x) < TILE_SIZE / 2:
+                            x = int(p.x // TILE_SIZE) * TILE_SIZE
+                            y1 = int(p.y // TILE_SIZE)
+                            y2 = int(g.y // TILE_SIZE)
+                            step = 1 if y2 > y1 else -1
+                            for y in range(y1 + step, y2, step):
+                                r = pygame.Rect(x, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+                                if any(r.colliderect(w) for w in walls):
+                                    return False
+                            return True
+
+                        # Same row
+                        if abs(p.y - g.y) < TILE_SIZE / 2:
+                            y = int(p.y // TILE_SIZE) * TILE_SIZE
+                            x1 = int(p.x // TILE_SIZE)
+                            x2 = int(g.x // TILE_SIZE)
+                            step = 1 if x2 > x1 else -1
+                            for x in range(x1 + step, x2, step):
+                                r = pygame.Rect(x * TILE_SIZE, y, TILE_SIZE, TILE_SIZE)
+                                if any(r.colliderect(w) for w in walls):
+                                    return False
+                            return True
+
+                        return False
+
+
+                    next_center = Vector2(next_pos[0] + TILE_SIZE/2,
+                                        next_pos[1] + TILE_SIZE/2)
+
+                    # before the loop
+                    threat_ghost_pos = None
 
                     for ghost in ghosts:
                         gpos = Vector2(ghost.rect.center)
-                        npos = Vector2(next_pos[0] + TILE_SIZE/2,
-                                       next_pos[1] + TILE_SIZE/2)
 
-                        # If this step moves Pac-Man closer to a nearby ghost
-                        pac_center = Vector2(self.rect.center)
-                        next_center = Vector2(next_pos[0] + TILE_SIZE / 2,
-                                            next_pos[1] + TILE_SIZE / 2)
+                        if pac_center.distance_to(gpos) >= threat_distance:
+                            continue
+                        if not has_line_of_sight(pac_center, gpos):
+                            continue
 
-                        for ghost in ghosts:
-                            gpos = Vector2(ghost.rect.center)
-
-                            # Only care if ghost is near
-                            if pac_center.distance_to(gpos) < threat_distance:
-
-                                # Check if the next tile brings Pac-Man closer to the ghost
-                                if next_center.distance_to(gpos) < pac_center.distance_to(gpos):
-                                    safe = False
-                                    break
+                        if next_center.distance_to(gpos) < pac_center.distance_to(gpos):
+                            safe = False
+                            threat_ghost_pos = gpos   # ← store the threatening ghost
+                            break
 
 
-                    # If unsafe, Pac-Man stays put and waits for next frame
                     if not safe:
-                        self.direction.update(0, 0)
+                        print("danger has been detected")
+                        best_dir = Vector2(0, 0)
+                        best_dist = -1
+
+                        for d in CARDINAL_DIRECTIONS:
+                            dx = int(d.x * TILE_SIZE)
+                            dy = int(d.y * TILE_SIZE)
+                            candidate = self.rect.move(dx, dy)
+                            if any(candidate.colliderect(w) for w in walls):
+                                continue
+
+                            cand_center = Vector2(candidate.center)
+                            dist = cand_center.distance_to(threat_ghost_pos)  # ← use correct ghost
+
+                            if dist > best_dist:
+                                best_dist = dist
+                                best_dir = Vector2(d)
+
+                        if best_dir.length_squared() > 0 and threat_ghost_pos is not None:
+                            self.direction = best_dir
+                        else:
+                            print("sitting still")
+                            self.direction.update(0, 0)
+
                         return
+
+
+                    # ---------------------------
                     # ---------------------------
 
                     # NORMAL MOVEMENT SELECTION
