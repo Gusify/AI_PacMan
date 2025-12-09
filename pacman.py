@@ -250,8 +250,10 @@ class Pacman(Entity):
 
         return []
 
-    def update(self, walls: List[pygame.Rect], pellets: List[Pellet]) -> None:
-        # Find nearest pellet and calculate path to it
+    def update(self, walls: List[pygame.Rect], pellets: List[Pellet], ghosts=None) -> None:
+        if ghosts is None:
+            ghosts = []  # normal call compatibility
+
         if self.at_tile_center():
             nearest_pellet = self.find_nearest_pellet(pellets)
             if nearest_pellet:
@@ -262,22 +264,52 @@ class Pacman(Entity):
                 )
                 path = self.astar(start_pos, goal_pos, walls)
 
-                # Set direction based on first step in path
                 if path:
                     next_pos = path[0]
+
+                    # ---------------------------
+                    # GHOST AVOIDANCE LOGIC
+                    # ---------------------------
+                    safe = True
+                    threat_distance = TILE_SIZE * 4   # 4 tiles radius
+
+                    for ghost in ghosts:
+                        gpos = Vector2(ghost.rect.center)
+                        npos = Vector2(next_pos[0] + TILE_SIZE/2,
+                                       next_pos[1] + TILE_SIZE/2)
+
+                        # If this step moves Pac-Man closer to a nearby ghost
+                        pac_center = Vector2(self.rect.center)
+                        next_center = Vector2(next_pos[0] + TILE_SIZE / 2,
+                                            next_pos[1] + TILE_SIZE / 2)
+
+                        for ghost in ghosts:
+                            gpos = Vector2(ghost.rect.center)
+
+                            # Only care if ghost is near
+                            if pac_center.distance_to(gpos) < threat_distance:
+
+                                # Check if the next tile brings Pac-Man closer to the ghost
+                                if next_center.distance_to(gpos) < pac_center.distance_to(gpos):
+                                    safe = False
+                                    break
+
+
+                    # If unsafe, Pac-Man stays put and waits for next frame
+                    if not safe:
+                        self.direction.update(0, 0)
+                        return
+                    # ---------------------------
+
+                    # NORMAL MOVEMENT SELECTION
                     dx = next_pos[0] - start_pos[0]
                     dy = next_pos[1] - start_pos[1]
 
-                    if dx > 0:
-                        self.direction = Vector2(1, 0)
-                    elif dx < 0:
-                        self.direction = Vector2(-1, 0)
-                    elif dy > 0:
-                        self.direction = Vector2(0, 1)
-                    elif dy < 0:
-                        self.direction = Vector2(0, -1)
+                    if dx > 0:  self.direction = Vector2(1, 0)
+                    elif dx < 0: self.direction = Vector2(-1, 0)
+                    elif dy > 0: self.direction = Vector2(0, 1)
+                    elif dy < 0: self.direction = Vector2(0, -1)
 
-        # Move in the current direction
         if not self.move(walls):
             self.direction.update(0, 0)
 
@@ -468,7 +500,7 @@ class Game:
         if self.state != "playing":
             return
 
-        self.pacman.update(self.maze.walls, self.pellets)
+        self.pacman.update(self.maze.walls, self.pellets, self.ghosts)
         for ghost in self.ghosts:
             ghost.update(self.maze.walls, self.pacman, dt)
 
