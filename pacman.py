@@ -57,7 +57,6 @@ LEVEL_LAYOUT = [
   "1111111111111111111111111111",
 ];
 
-#comment
 CARDINAL_DIRECTIONS = [
     Vector2(1, 0),
     Vector2(-1, 0),
